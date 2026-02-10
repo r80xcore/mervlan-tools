@@ -1,6 +1,7 @@
 #!/bin/sh
 PATH="/usr/sbin:/sbin:/usr/bin:/bin:$PATH"
 
+LAN_TRUNK="${LAN_TRUNK:-}"
 # Merlin-safe command detection
 if ! type merv_has >/dev/null 2>&1; then
   merv_has() { type "$1" >/dev/null 2>&1; }
@@ -30,8 +31,10 @@ fi
 WAN="$(nvram get wan_ifname 2>/dev/null)"
 [ -z "$WAN" ] && WAN="$(nvram get wan0_ifname 2>/dev/null)"
 
-LAN_TRUNK="$(nvram get lan_ifnames 2>/dev/null \
-  | tr ' ' '\n' | grep -E '^eth[0-9]+' | head -n1)"
+if [ -z "$LAN_TRUNK" ]; then
+  LAN_TRUNK="$(nvram get lan_ifnames 2>/dev/null \
+    | tr ' ' '\n' | grep -E '^eth[0-9]+' | head -n1)"
+fi
 
 if [ -z "$LAN_TRUNK" ] && [ -d /sys/class/net/br0/brif ]; then
   LAN_TRUNK="$(ls -1 /sys/class/net/br0/brif 2>/dev/null \
@@ -54,8 +57,8 @@ echo ""
 
 echo "---ETHCTL PHY-CROSSBAR---"
 if [ -n "$ETHCTL" ]; then
-  [ -n "$LAN_TRUNK" ] && "$ETHCTL" "$LAN_TRUNK" phy-crossbar 2>/dev/null || true
-  "$ETHCTL" bcmsw phy-crossbar 2>/dev/null || true
+  [ -n "$LAN_TRUNK" ] && "$ETHCTL" "$LAN_TRUNK" phy-crossbar 2>&1 || true
+  "$ETHCTL" bcmsw phy-crossbar 2>&1 || true
 else
   echo "no ethctl"
 fi
@@ -66,7 +69,24 @@ PORTS=""
 if [ -n "$LAN_TRUNK" ] && [ -n "$ETHCTL" ]; then
   p=0
   while [ $p -le 31 ]; do
-    if "$ETHCTL" "$LAN_TRUNK" media-type port "$p" 2>/dev/null | grep -q 'Link is'; then
+    out="$("$ETHCTL" "$LAN_TRUNK" media-type port "$p" 2>&1)"
+    echo "$out" | grep -q '^Error:' && { p=$((p+1)); continue; }
+    echo "$out" | grep -q '^Usage:' && { p=$((p+1)); continue; }
+    echo "$out" | grep -q 'Link is' && PORTS="$PORTS $p"
+    p=$((p + 1))
+  done
+fi
+
+# Fallback: on some models the switch is behind the WAN-side eth
+if [ -z "$PORTS" ] && [ -n "$WAN" ] && [ -n "$ETHCTL" ]; then
+  echo "No ports found on LAN_TRUNK=$LAN_TRUNK; retrying on WAN_IFNAME=$WAN ..."
+  LAN_TRUNK="$WAN"
+  p=0
+  while [ $p -le 31 ]; do
+    out="$("$ETHCTL" "$LAN_TRUNK" media-type port "$p" 2>&1)"
+    echo "$out" | grep -q '^Error:' && { p=$((p+1)); continue; }
+    echo "$out" | grep -q '^Usage:' && { p=$((p+1)); continue; }
+    if echo "$out" | grep -q 'Link is'; then
       PORTS="$PORTS $p"
     fi
     p=$((p + 1))
