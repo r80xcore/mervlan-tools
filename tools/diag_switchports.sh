@@ -25,7 +25,8 @@ read -r _
 
 ETHCTL=""
 if merv_has ethctl; then
-  ETHCTL="$(merv_cmd ethctl 2>/dev/null)" || ETHCTL="ethctl"
+  ETHCTL="$(merv_cmd ethctl 2>/dev/null)"
+  [ -z "$ETHCTL" ] && ETHCTL="ethctl"
 fi
 
 WAN="$(nvram get wan_ifname 2>/dev/null)"
